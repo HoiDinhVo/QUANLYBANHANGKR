@@ -66,9 +66,8 @@ export default function InvoiceHistoryPage() {
         try {
             const params = new URLSearchParams();
             if (storeId && storeId !== 'all') params.append('storeId', storeId);
-            params.append('t', Date.now().toString());
 
-            const res = await fetch(`/api/invoices?${params.toString()}`, { cache: 'no-store' });
+            const res = await fetch(`/api/invoices?${params.toString()}`);
             const data = await res.json();
 
             const rawInvoices = Array.isArray(data) ? data : (data?.invoices || data?.data || []);

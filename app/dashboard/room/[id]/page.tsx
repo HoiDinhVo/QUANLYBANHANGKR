@@ -44,11 +44,9 @@ const MOBILE_CATEGORIES = [
 
 // ─── Fetch helper ─────────────────────────────────────────────────────────────
 
-const fetchFresh = (url: string) =>
-  fetch(url, {
-    cache: 'no-store',
-    headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache' },
-  });
+// Tận dụng edge cache (Cache-Control: s-maxage trên server). Helper giữ
+// nguyên tên để không phải đổi 7 call sites.
+const fetchFresh = (url: string) => fetch(url);
 
 // ─── Hook: detect mobile ──────────────────────────────────────────────────────
 
@@ -385,9 +383,7 @@ export default function RoomPage() {
 
   const loadRoomData = async (currentRoomId: string) => {
     try {
-      const ts = Date.now();
-
-      const roomsRes = await fetchFresh(`/api/admin/rooms?t=${ts}`);
+      const roomsRes = await fetchFresh(`/api/admin/rooms`);
       const rooms = await roomsRes.json();
       const foundRoom = rooms.find(
         (r: Room) => String(r.id ?? (r as any).Id) === String(currentRoomId)
@@ -402,16 +398,16 @@ export default function RoomPage() {
       setRoom(foundRoom);
       setCustomPricePerHour(foundRoom.pricePerHour);
 
-      const storesRes = await fetchFresh(`/api/admin/stores?t=${ts}`);
+      const storesRes = await fetchFresh(`/api/admin/stores`);
       const storesData = await storesRes.json();
       setStore(storesData.find((s: Store) => String(s.id ?? (s as any).Id) === String(foundRoom.storeId)) || null);
 
-      const productsRes = await fetchFresh(`/api/products?storeId=${foundRoom.storeId}&t=${ts}`);
+      const productsRes = await fetchFresh(`/api/products?storeId=${foundRoom.storeId}`);
       const productsData = await productsRes.json();
       setProducts(Array.isArray(productsData) ? productsData : []);
 
       if (foundRoom.status === 'occupied') {
-        const sessionRes = await fetchFresh(`/api/rooms/session?roomId=${currentRoomId}&t=${ts}`);
+        const sessionRes = await fetchFresh(`/api/rooms/session?roomId=${currentRoomId}`);
         if (sessionRes.ok) {
           const sessionData = await sessionRes.json();
 
@@ -448,7 +444,7 @@ export default function RoomPage() {
               setRawEndTime(end);
               setIsManualEndTime(false);
             }
-            const ordersRes = await fetchFresh(`/api/orders?sessionId=${sessionId}&t=${ts}`);
+            const ordersRes = await fetchFresh(`/api/orders?sessionId=${sessionId}`);
             const ordersData = await ordersRes.json();
             const sortedOrders = Array.isArray(ordersData)
               ? [...ordersData].sort((a, b) =>
@@ -522,7 +518,7 @@ export default function RoomPage() {
         const sessionId = session.id ?? (session as any).Id;
         if (!sessionId) return;
 
-        const ordersRes = await fetchFresh(`/api/orders?sessionId=${sessionId}&t=${Date.now()}`);
+        const ordersRes = await fetchFresh(`/api/orders?sessionId=${sessionId}`);
         if (ordersRes.ok) {
           const ordersData = await ordersRes.json();
           if (Array.isArray(ordersData)) {
@@ -850,9 +846,8 @@ export default function RoomPage() {
   const openTransferModal = async () => {
     try {
       if (!room) return;
-      const ts = Date.now();
       const currentStoreId = room.storeId ?? (room as any).StoreId;
-      const roomsRes = await fetchFresh(`/api/admin/rooms?storeId=${currentStoreId}&t=${ts}`);
+      const roomsRes = await fetchFresh(`/api/admin/rooms?storeId=${currentStoreId}`);
       const roomsData = await roomsRes.json();
       const rId = room.id ?? (room as any).Id;
       const emptyOnes = roomsData.filter((r: any) =>
@@ -1253,7 +1248,7 @@ export default function RoomPage() {
         const result = await res.json();
         const invoiceData = result.data || result;
         toast.success('Tạo hóa đơn thành công');
-        router.push(`/dashboard/invoice/${invoiceData.id ?? invoiceData.Id}`);
+        router.push(`/dashboard/invoice/${invoiceData.id ?? invoiceData.Id}?print=true`);
       } else toast.error('Lỗi khi tạo hóa đơn');
     } catch (err) { console.error('Error generating invoice:', err); toast.error('Lỗi khi tạo hóa đơn'); }
   };

@@ -67,20 +67,29 @@ export async function GET(request: Request) {
       },
     });
 
+    const headers = {
+      // Cache ngắn 10s. Status có thể đổi (active/paused/cancelled) nhưng
+      // các thay đổi đều đi qua client của user đang xem nên acceptable.
+      'Cache-Control': 's-maxage=10, stale-while-revalidate=60',
+    };
+
     if (session) {
-      return Response.json({
-        id: session.Id,
-        roomId: session.RoomId,
-        storeId: session.StoreId,
-        startTime: session.StartTime,
-        status: session.Status,
-        updatedAt: session.UpdatedAt,
-        customerName: session.CustomerName ?? 'Khách lẻ',
-        endTime: session.EndTime, // Trả thêm trường EndTime
-      });
+      return Response.json(
+        {
+          id: session.Id,
+          roomId: session.RoomId,
+          storeId: session.StoreId,
+          startTime: session.StartTime,
+          status: session.Status,
+          updatedAt: session.UpdatedAt,
+          customerName: session.CustomerName ?? 'Khách lẻ',
+          endTime: session.EndTime,
+        },
+        { headers },
+      );
     }
 
-    return Response.json(null);
+    return Response.json(null, { headers });
   } catch (error) {
     console.error('Error fetching room session:', error);
     return Response.json({ error: 'Server error' }, { status: 500 });
@@ -98,47 +107,25 @@ export async function PUT(request: Request) {
 
     const updateData: any = {};
 
-    // ✅ XỬ LÝ HỦY PHÒNG: Hoàn kho và xóa danh sách món (orderItems)
+    // XỬ LÝ HỦY PHÒNG
+    // - Stock chỉ bị decrement khi thanh toán (tạo Invoice trong /api/invoices).
+    //   Nên session chưa thanh toán = stock chưa giảm = KHÔNG hoàn kho.
+    // - Nếu session đã có Invoice = đã thanh toán = không cho hủy
+    //   (việc hủy đơn đã thanh toán phải đi qua quy trình refund riêng).
+    // - Giữ nguyên OrderItems để báo cáo lịch sử có thể truy vết được;
+    //   inventory route đã loại sessions cancelled qua filter Status.
     const newStatus = status || Status;
     if (newStatus === 'cancelled') {
-      await prisma.$transaction(async (tx) => {
-        // Lấy thông tin session để có StoreId chính xác
-        const sessionData = await tx.roomSession.findUnique({
-          where: { Id: id },
-          select: { StoreId: true }
-        });
-
-        if (!sessionData) throw new Error('Session not found');
-
-        // 1. Tìm tất cả các món đã gọi của phiên này
-        const items = await tx.orderItem.findMany({
-          where: { RoomSessionId: id }
-        });
-
-        // 2. Hoàn trả số lượng vào kho cho từng sản phẩm
-        for (const item of items) {
-          await tx.product.update({
-            where: { Id: item.ProductId },
-            data: { Quantity: { increment: item.Quantity } }
-          });
-
-          await (tx as any).inventoryLog.create({
-            data: {
-              Id: `RETURN-${Date.now()}-${item.Id}`,
-              ProductId: item.ProductId,
-              StoreId: sessionData.StoreId,
-              Quantity: item.Quantity,
-              Type: 'restock',
-              Note: `Hoàn kho do hủy phòng ${id}`
-            }
-          });
-        }
-
-        // 3. Xóa vĩnh viễn các orderItems của phiên này
-        await tx.orderItem.deleteMany({
-          where: { RoomSessionId: id }
-        });
+      const existingInvoice = await prisma.invoice.findUnique({
+        where: { RoomSessionId: id },
+        select: { Id: true },
       });
+      if (existingInvoice) {
+        return Response.json(
+          { error: 'Không thể hủy phiên đã thanh toán' },
+          { status: 400 }
+        );
+      }
     }
 
     // Cập nhật thời gian bắt đầu (startTime / StartTime)

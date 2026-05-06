@@ -56,9 +56,8 @@ export default function TrashPage() {
         try {
             const params = new URLSearchParams();
             if (storeId && storeId !== 'all') params.append('storeId', storeId);
-            params.append('t', Date.now().toString());
 
-            const res = await fetch(`/api/invoices/trash?${params.toString()}`, { cache: 'no-store' });
+            const res = await fetch(`/api/invoices/trash?${params.toString()}`);
             const data = await res.json();
             const raw = Array.isArray(data) ? data : [];
             setInvoices(

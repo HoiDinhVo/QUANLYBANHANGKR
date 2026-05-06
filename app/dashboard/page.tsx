@@ -76,13 +76,8 @@ export default function Dashboard() {
       setSessions({});
       setSessionTotals({});
 
-      const response = await fetch(`/api/admin/rooms?storeId=${storeId}&t=${Date.now()}`, {
-        cache: 'no-store',
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      });
+      // Tận dụng edge cache (s-maxage=10) — không bypass nữa.
+      const response = await fetch(`/api/admin/rooms?storeId=${storeId}`);
       const rawData: Room[] = await response.json();
 
       // Lọc bỏ phòng ảo "MANG VỀ" (Id: EXTERNAL) để không hiển thị trên sơ đồ phòng chính
@@ -107,25 +102,16 @@ export default function Dashboard() {
       const totalsData: Record<string, number> = {};
 
       await Promise.all(occupiedRooms.map(async (room) => {
-        try { // Chỉ lấy session nếu thực sự cần thiết, hoặc gộp vào API rooms
-          const sessionRes = await fetch(`/api/rooms/session?roomId=${room.id}&t=${Date.now()}`, {
-            cache: 'no-store',
-            headers: {
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              'Pragma': 'no-cache'
-            }
-          });
+        try {
+          // Tận dụng edge cache (s-maxage=10).
+          const sessionRes = await fetch(`/api/rooms/session?roomId=${room.id}`);
           if (sessionRes.ok) {
             const session = await sessionRes.json();
             sessionData[room.id] = session;
 
             const sessionId = session.id || (session as any).Id;
-            // TỐI ƯU: Nếu là nhân viên xem ngoài sảnh, có thể chưa cần load chi tiết đơn hàng ngay
-            // giúp giảm Function Invocations đáng kể
-            const ordersRes = await fetch(`/api/orders?sessionId=${sessionId}&t=${Date.now()}`, {
-              cache: 'no-store',
-              next: { revalidate: 60 } // Cho phép cache nhẹ 60s ngoài Dashboard
-            });
+            // Tận dụng edge cache (s-maxage=5).
+            const ordersRes = await fetch(`/api/orders?sessionId=${sessionId}`);
             if (ordersRes.ok) {
               const orders = await ordersRes.json();
               const productSum = orders.reduce((sum: number, item: any) =>
@@ -148,13 +134,8 @@ export default function Dashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const storesRes = await fetch(`/api/admin/stores?t=${Date.now()}`, {
-        cache: 'no-store',
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      });
+      // Tận dụng edge cache (s-maxage=300) — stores rất tĩnh.
+      const storesRes = await fetch('/api/admin/stores');
       const storesData = await storesRes.json();
       setStores(storesData);
 

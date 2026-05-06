@@ -144,7 +144,7 @@ export default function ReportsPage() {
     const fetchInvoices = useCallback(async (storeId: string) => {
         if (!storeId) return;
         try {
-            const res = await fetch(`/api/invoices?storeId=${storeId}&includeDeleted=true`, { cache: 'no-store' });
+            const res = await fetch(`/api/invoices?storeId=${storeId}&includeDeleted=true`);
             const data = await res.json();
             setInvoices(data);
         } catch {

@@ -13,7 +13,12 @@ export async function GET() {
       createdAt: s.CreatedAt,
     }));
 
-    return Response.json(formatted);
+    return Response.json(formatted, {
+      headers: {
+        // Stores rất tĩnh, hiếm khi đổi → cache lâu.
+        'Cache-Control': 's-maxage=300, stale-while-revalidate=600',
+      },
+    });
   } catch (error) {
     console.error(error);
     return Response.json([], { status: 500 });

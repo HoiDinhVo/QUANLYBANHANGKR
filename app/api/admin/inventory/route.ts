@@ -81,35 +81,11 @@ export async function GET(req: NextRequest) {
         });
 
         /* ─────────────────────────────────────────────────────── */
-        /* 3. SESSIONS IN PERIOD (non-cancelled)                   */
+        /* 3. INVENTORY LOGS IN PERIOD                             */
+        /*    (InventoryLog là source of truth duy nhất)           */
         /* ─────────────────────────────────────────────────────── */
 
-        const sessionsInPeriod = await prisma.roomSession.findMany({
-            where: {
-                StoreId: storeId,
-                Status: { not: 'cancelled' },
-                StartTime: { gte: startDate, lte: endDate },
-            },
-            select: { Id: true },
-        });
-        const sessionIdsInPeriod = sessionsInPeriod.map(s => s.Id);
-
-        /* ─────────────────────────────────────────────────────── */
-        /* 4. SALES IN PERIOD                                      */
-        /* ─────────────────────────────────────────────────────── */
-
-        const salesInPeriod = sessionIdsInPeriod.length > 0
-            ? await prisma.orderItem.groupBy({
-                by: ['ProductId'],
-                where: { RoomSessionId: { in: sessionIdsInPeriod } },
-                _sum: { Quantity: true },
-            })
-            : [];
-
-        /* ─────────────────────────────────────────────────────── */
-        /* 5. INVENTORY LOGS IN PERIOD                             */
-        /* ─────────────────────────────────────────────────────── */
-
+        // Tất cả "nhập kho" trong kỳ: log với Quantity > 0 (restock + nhập đầu)
         const restocksInPeriod = await (prisma as any).inventoryLog.groupBy({
             by: ['ProductId'],
             where: {
@@ -120,50 +96,42 @@ export async function GET(req: NextRequest) {
             _sum: { Quantity: true },
         });
 
+        // Bán trong phòng (Type='sale') — tách riêng để hiển thị + tính revenue
+        const salesInPeriod = await (prisma as any).inventoryLog.groupBy({
+            by: ['ProductId'],
+            where: {
+                StoreId: storeId,
+                CreatedAt: { gte: startDate, lte: endDate },
+                Type: 'sale',
+            },
+            _sum: { Quantity: true },
+        });
+
+        // Xuất khác (mang về, tặng, điều chỉnh giảm) — log Quantity<0 không phải sale
         const exportsInPeriod = await (prisma as any).inventoryLog.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
                 CreatedAt: { gte: startDate, lte: endDate },
                 Quantity: { lt: 0 },
+                Type: { not: 'sale' },
             },
             _sum: { Quantity: true },
         });
 
         /* ─────────────────────────────────────────────────────── */
-        /* 6. ACTIVITY FROM startDate → NOW (for opening stock)    */
+        /* 4. ACTIVITY FROM startDate → NOW (for opening stock)    */
         /*                                                         */
-        /* Opening stock formula:                                  */
+        /* Opening stock formula (đơn giản, dựa hoàn toàn vào log):*/
         /*   openingStock = currentStock (DB)                      */
-        /*                  + soldSinceStart                       */
-        /*                  + exportedSinceStart                   */
-        /*                  - importedSinceStart                   */
+        /*                  + abs(decrements từ startDate đến NOW) */
+        /*                  - increments từ startDate đến NOW      */
         /*                                                         */
-        /* This reverses everything that happened from             */
-        /* startDate up to right now to get the stock at           */
-        /* the beginning of the period.                            */
+        /* Đảo ngược toàn bộ activity (qua log) từ startDate tới   */
+        /* hiện tại để có stock tại thời điểm đầu kỳ.              */
         /* ─────────────────────────────────────────────────────── */
 
-        // Sessions from startDate to NOW (not capped at endDate)
-        const sessionsSinceStart = await prisma.roomSession.findMany({
-            where: {
-                StoreId: storeId,
-                Status: { not: 'cancelled' },
-                StartTime: { gte: startDate },
-            },
-            select: { Id: true },
-        });
-        const sessionIdsSinceStart = sessionsSinceStart.map(s => s.Id);
-
-        const salesSinceStart = sessionIdsSinceStart.length > 0
-            ? await prisma.orderItem.groupBy({
-                by: ['ProductId'],
-                where: { RoomSessionId: { in: sessionIdsSinceStart } },
-                _sum: { Quantity: true },
-            })
-            : [];
-
-        const importSinceStart = await (prisma as any).inventoryLog.groupBy({
+        const incrementsSinceStart = await (prisma as any).inventoryLog.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
@@ -173,7 +141,7 @@ export async function GET(req: NextRequest) {
             _sum: { Quantity: true },
         });
 
-        const exportSinceStart = await (prisma as any).inventoryLog.groupBy({
+        const decrementsSinceStart = await (prisma as any).inventoryLog.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
@@ -203,9 +171,9 @@ export async function GET(req: NextRequest) {
         const safe = (n: any) => Number(n || 0);
 
         const stats = products.map(p => {
-            // ── In-period numbers ──────────────────────────────
+            // ── In-period numbers (đều đọc từ InventoryLog) ────
             const salePeriod   = salesInPeriod.find((s: any) => s.ProductId === p.Id);
-            const roomSales    = safe(salePeriod?._sum?.Quantity);
+            const roomSales    = Math.abs(safe(salePeriod?._sum?.Quantity)); // log sale âm
 
             const exportPeriod = exportsInPeriod.find((e: any) => e.ProductId === p.Id);
             const exported     = Math.abs(safe(exportPeriod?._sum?.Quantity));
@@ -213,30 +181,24 @@ export async function GET(req: NextRequest) {
             const restockPeriod   = restocksInPeriod.find((r: any) => r.ProductId === p.Id);
             const totalRestocked  = safe(restockPeriod?._sum?.Quantity);
 
-            // ── Opening stock (correct formula) ───────────────
-            //
-            // p.Quantity = current stock right now (DB truth)
-            // We add back everything consumed since startDate
-            // and subtract everything added since startDate
-            // to reconstruct what the stock WAS at startDate.
-            //
-            const importRec             = importSinceStart.find((i: any) => i.ProductId === p.Id);
-            const totalImportedSinceStart = safe(importRec?._sum?.Quantity);
+            // ── Opening stock ──────────────────────────────────
+            // Đảo ngược toàn bộ activity từ startDate tới NOW dựa hoàn toàn
+            // vào InventoryLog (single source of truth):
+            //   openingStock = currentStock
+            //                + abs(decrements từ startDate đến NOW)
+            //                - increments từ startDate đến NOW
+            const incRec   = incrementsSinceStart.find((i: any) => i.ProductId === p.Id);
+            const totalIncSinceStart = safe(incRec?._sum?.Quantity);
 
-            const exportRec              = exportSinceStart.find((e: any) => e.ProductId === p.Id);
-            const totalExportedSinceStart = Math.abs(safe(exportRec?._sum?.Quantity));
-
-            const soldRec               = salesSinceStart.find((s: any) => s.ProductId === p.Id);
-            const totalSoldSinceStart   = safe(soldRec?._sum?.Quantity);
+            const decRec   = decrementsSinceStart.find((d: any) => d.ProductId === p.Id);
+            const totalDecSinceStart = Math.abs(safe(decRec?._sum?.Quantity));
 
             const openingStock =
                 p.Quantity
-                + totalSoldSinceStart       // add back sales
-                + totalExportedSinceStart   // add back manual exports/losses
-                - totalImportedSinceStart;  // subtract restocks
+                + totalDecSinceStart   // cộng lại mọi thứ đã trừ kể từ startDate
+                - totalIncSinceStart;  // trừ đi mọi thứ đã nhập kể từ startDate
 
             // ── Closing stock ──────────────────────────────────
-            // = openingStock + restocked in period - sold in period - exported in period
             const totalDecrement = roomSales + exported;
             const closingStock   = openingStock + totalRestocked - totalDecrement;
 
@@ -249,8 +211,8 @@ export async function GET(req: NextRequest) {
                 totalSold:      roomSales,
                 totalExported:  exported,
                 totalDecrement,
-                totalRevenue:   roomSales * Number(p.Price || 0), // revenue from room sales only
-                currentStock:   p.Quantity,                        // real-time stock in DB
+                totalRevenue:   roomSales * Number(p.Price || 0),  // bán phòng × giá hiện tại
+                currentStock:   p.Quantity,
                 closingStock:   Math.max(0, closingStock),
             };
         });
@@ -259,22 +221,31 @@ export async function GET(req: NextRequest) {
         /* 9. RESPONSE                                             */
         /* ─────────────────────────────────────────────────────── */
 
-        return NextResponse.json({
-            stats,
-            logs: logs.map((l: any) => ({
-                id:          l.Id,
-                productName: l.product?.Name || 'Sản phẩm đã xóa',
-                quantity:    l.Quantity,
-                createdAt:   l.CreatedAt,
-                type:        l.Type,
-                note:        l.Note,
-            })),
-            period: {
-                startDate: startDate.toISOString(),
-                endDate:   endDate.toISOString(),
-                type,
+        return NextResponse.json(
+            {
+                stats,
+                logs: logs.map((l: any) => ({
+                    id:          l.Id,
+                    productName: l.product?.Name || 'Sản phẩm đã xóa',
+                    quantity:    l.Quantity,
+                    createdAt:   l.CreatedAt,
+                    type:        l.Type,
+                    note:        l.Note,
+                })),
+                period: {
+                    startDate: startDate.toISOString(),
+                    endDate:   endDate.toISOString(),
+                    type,
+                },
             },
-        });
+            {
+                headers: {
+                    // Báo cáo: 6 groupBy + 2 findMany — đắt CPU. Cache 30s đủ
+                    // tươi, mỗi storeId/type/range là cache key riêng.
+                    'Cache-Control': 's-maxage=30, stale-while-revalidate=300',
+                },
+            },
+        );
 
     } catch (error) {
         console.error('Inventory Stats API Error:', error);

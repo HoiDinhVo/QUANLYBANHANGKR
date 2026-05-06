@@ -35,7 +35,11 @@ export async function GET(request: NextRequest) {
             deletedAt: inv.DeletedAt,
         }));
 
-        return NextResponse.json(transformed);
+        return NextResponse.json(transformed, {
+            headers: {
+                'Cache-Control': 's-maxage=30, stale-while-revalidate=300',
+            },
+        });
     } catch (error) {
         console.error('Trash fetch error:', error);
         return Response.json({ error: 'Server error' }, { status: 500 });

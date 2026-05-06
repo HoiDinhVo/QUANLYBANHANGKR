@@ -25,7 +25,13 @@ export async function GET(request: Request) {
       createdAt: p.CreatedAt,
     }));
 
-    return Response.json(formatted);
+    return Response.json(formatted, {
+      headers: {
+        // Sản phẩm + giá ít đổi, nhưng Quantity đổi sau mỗi thanh toán.
+        // 30s là cân bằng tốt giữa tươi và tiết kiệm.
+        'Cache-Control': 's-maxage=30, stale-while-revalidate=300',
+      },
+    });
   } catch (error) {
     console.error(error);
     return Response.json([], { status: 500 }); // ⚠️ luôn trả array

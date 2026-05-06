@@ -19,7 +19,14 @@ export async function GET(request: Request) {
       createdAt: r.CreatedAt,
     }));
 
-    return Response.json(formatted);
+    return Response.json(formatted, {
+      headers: {
+        // Edge cache 10s + stale-while-revalidate 60s.
+        // Status phòng đổi sau mỗi mutation (POST/PUT/DELETE) — chấp nhận
+        // staleness tối đa 10s đổi lại tiết kiệm phần lớn function invocations.
+        'Cache-Control': 's-maxage=10, stale-while-revalidate=60',
+      },
+    });
   } catch (error) {
     console.error(error);
     return Response.json([], { status: 500 });

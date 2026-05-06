@@ -5,9 +5,8 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import Link from 'next/link';
-import { ArrowLeft, Printer, Check } from 'lucide-react';
+import { ArrowLeft, Printer } from 'lucide-react';
 import { Invoice, Room, Store } from '@/lib/db';
-import { toast } from 'sonner';
 
 export default function InvoicePage() {
   const params = useParams();
@@ -27,12 +26,20 @@ export default function InvoicePage() {
 
   useEffect(() => {
     if (shouldAutoPrint && invoice && !isLoading && invoice.items) {
+      // Sau khi đóng hộp thoại in (in xong hoặc user hủy) → quay về trang chủ
+      const onAfterPrint = () => {
+        router.push('/dashboard');
+      };
+      window.addEventListener('afterprint', onAfterPrint);
       const animationId = requestAnimationFrame(() => {
         window.print();
       });
-      return () => cancelAnimationFrame(animationId);
+      return () => {
+        window.removeEventListener('afterprint', onAfterPrint);
+        cancelAnimationFrame(animationId);
+      };
     }
-  }, [shouldAutoPrint, invoice, isLoading]);
+  }, [shouldAutoPrint, invoice, isLoading, router]);
 
   const fetchInvoiceData = async () => {
     try {
@@ -72,30 +79,6 @@ export default function InvoicePage() {
       console.error('Error fetching invoice:', error);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleCompleteRoom = async () => {
-    if (!invoice) return;
-    try {
-      const response = await fetch('/api/rooms/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: String(invoice.roomId),
-          invoiceId: String(invoice.id),
-        }),
-      });
-      if (response.ok) {
-        toast.success('Thanh toán hoàn tất');
-        router.refresh();
-        router.push('/dashboard');
-      } else {
-        toast.error('Có lỗi xảy ra khi hoàn tất phòng');
-      }
-    } catch (error) {
-      console.error('Error completing room:', error);
-      toast.error('Lỗi kết nối máy chủ');
     }
   };
 
@@ -157,10 +140,6 @@ export default function InvoicePage() {
             <Button onClick={() => window.print()} size="sm" className="bg-blue-600 hover:bg-blue-700 text-white gap-1 px-2 sm:px-4">
               <Printer className="w-4 h-4" />
               <span className="hidden sm:inline">In hóa đơn</span>
-            </Button>
-            <Button onClick={handleCompleteRoom} size="sm" className="bg-green-600 hover:bg-green-700 text-white gap-1 px-2 sm:px-4">
-              <Check className="w-4 h-4" />
-              <span className="hidden sm:inline">Hoàn tất</span>
             </Button>
           </div>
         </div>

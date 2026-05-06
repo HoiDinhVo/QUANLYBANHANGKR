@@ -86,10 +86,20 @@ export async function PUT(request: Request) {
 
     const existingItem = await prisma.orderItem.findUnique({
       where: { Id: id },
+      include: { RoomSession: { select: { Status: true } } },
     });
 
     if (!existingItem) {
       return Response.json({ error: 'Order item not found' }, { status: 404 });
+    }
+
+    // Chặn sửa item của session đã thanh toán: stock đã decrement, sửa Quantity
+    // ở đây sẽ làm sales record lệch với stock thực tế trong kho.
+    if (existingItem.RoomSession?.Status === 'completed') {
+      return Response.json(
+        { error: 'Không thể sửa món của phiên đã thanh toán' },
+        { status: 400 }
+      );
     }
 
     if (parsedQuantity !== undefined) {
@@ -139,10 +149,20 @@ export async function DELETE(request: Request) {
 
     const orderItem = await prisma.orderItem.findUnique({
       where: { Id: id },
+      include: { RoomSession: { select: { Status: true } } },
     });
 
     if (!orderItem) {
       return Response.json({ error: 'Order item not found' }, { status: 404 });
+    }
+
+    // Chặn xóa item của session đã thanh toán: stock đã decrement, xóa
+    // OrderItem ở đây sẽ làm sales record biến mất nhưng kho không hoàn lại.
+    if (orderItem.RoomSession?.Status === 'completed') {
+      return Response.json(
+        { error: 'Không thể xóa món của phiên đã thanh toán' },
+        { status: 400 }
+      );
     }
 
     await prisma.orderItem.delete({
@@ -161,13 +181,36 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const sessionId = searchParams.get('sessionId');
 
+    // Cache ngắn 5s. Orders đổi mỗi khi nhân viên gọi món, nhưng dashboard
+    // chỉ cần "tổng tương đối" để hiển thị; trang phòng có nút Refresh thủ công.
+    const headers = {
+      'Cache-Control': 's-maxage=5, stale-while-revalidate=30',
+    };
+
     // If sessionId is provided, return orders for that session
     if (sessionId) {
       const items = await prisma.orderItem.findMany({
         where: { RoomSessionId: sessionId },
       });
 
-      return Response.json(items.map(item => ({
+      return Response.json(
+        items.map(item => ({
+          id: item.Id,
+          roomSessionId: item.RoomSessionId,
+          productId: item.ProductId,
+          productName: item.ProductName,
+          price: Number(item.Price),
+          quantity: item.Quantity,
+          orderedAt: item.OrderedAt,
+        })),
+        { headers },
+      );
+    }
+
+    // Otherwise, return all orders
+    const allItems = await prisma.orderItem.findMany();
+    return Response.json(
+      allItems.map(item => ({
         id: item.Id,
         roomSessionId: item.RoomSessionId,
         productId: item.ProductId,
@@ -175,20 +218,9 @@ export async function GET(request: Request) {
         price: Number(item.Price),
         quantity: item.Quantity,
         orderedAt: item.OrderedAt,
-      })));
-    }
-
-    // Otherwise, return all orders
-    const allItems = await prisma.orderItem.findMany();
-    return Response.json(allItems.map(item => ({
-      id: item.Id,
-      roomSessionId: item.RoomSessionId,
-      productId: item.ProductId,
-      productName: item.ProductName,
-      price: Number(item.Price),
-      quantity: item.Quantity,
-      orderedAt: item.OrderedAt,
-    })));
+      })),
+      { headers },
+    );
   } catch (error) {
     console.error('Error in GET /api/orders:', error);
     return Response.json({ error: 'Server error' }, { status: 500 });

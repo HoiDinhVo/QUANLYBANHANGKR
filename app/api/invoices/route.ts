@@ -48,8 +48,37 @@ export async function POST(request: NextRequest) {
     const totalPrice = !isNaN(requestedTotalPrice) ? requestedTotalPrice : Math.ceil(subtotal / 1000) * 1000;
 
     // Thực hiện trong transaction để đảm bảo tính nhất quán dữ liệu
-    const [invoice] = await prisma.$transaction([
-      prisma.invoice.create({
+    // (tạo hóa đơn + trừ kho + đóng phiên + giải phóng phòng phải đồng nhất)
+    const invoice = await prisma.$transaction(async (tx) => {
+      // 1. Kiểm tra & trừ kho cho từng OrderItem + ghi InventoryLog Type='sale'
+      //    - updateMany với where Quantity >= x: atomic, chống race + chống âm.
+      //    - InventoryLog: tạo audit trail đầy đủ, là source of truth cho báo cáo
+      //      kho. Id = `SALE-{orderItemId}` để chống ghi trùng và truy vết được.
+      for (const item of items) {
+        const updated = await tx.product.updateMany({
+          where: { Id: item.ProductId, Quantity: { gte: item.Quantity } },
+          data: { Quantity: { decrement: item.Quantity } },
+        });
+        if (updated.count === 0) {
+          throw new Error(`Sản phẩm "${item.ProductName}" không đủ tồn kho`);
+        }
+
+        await (tx as any).inventoryLog.create({
+          data: {
+            Id: `SALE-${item.Id}`,
+            ProductId: item.ProductId,
+            StoreId: session.StoreId,
+            Quantity: -item.Quantity,
+            Type: 'sale',
+            Note: `Bán phòng ${session.RoomId}`,
+          },
+        });
+      }
+
+      // 2. Tạo hóa đơn (RoomSessionId là @unique trong schema → ngăn tạo trùng,
+      //    nếu user lỡ bấm "Thanh toán" 2 lần thì lần thứ 2 sẽ throw, transaction
+      //    tự rollback phần trừ kho ở trên).
+      const created = await tx.invoice.create({
         data: {
           Id: Date.now().toString(),
           RoomSessionId: roomSessionId,
@@ -62,18 +91,22 @@ export async function POST(request: NextRequest) {
           TotalPrice: totalPrice,
           Status: 'paid',
         },
-      }),
-      // Cập nhật trạng thái session
-      prisma.roomSession.update({
+      });
+
+      // 3. Cập nhật trạng thái session
+      await tx.roomSession.update({
         where: { Id: roomSessionId },
         data: { Status: 'completed' },
-      }),
-      // Đưa phòng về trạng thái trống
-      prisma.room.update({
+      });
+
+      // 4. Đưa phòng về trạng thái trống
+      await tx.room.update({
         where: { Id: session.RoomId },
         data: { Status: 'empty' },
-      }),
-    ]);
+      });
+
+      return created;
+    });
 
     // Return invoice with items for display
     return Response.json({
@@ -88,8 +121,12 @@ export async function POST(request: NextRequest) {
         orderedAt: item.OrderedAt,
       })),
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Invoice creation error:', error);
+    const msg = typeof error?.message === 'string' ? error.message : '';
+    if (msg.includes('không đủ tồn kho')) {
+      return Response.json({ error: msg }, { status: 400 });
+    }
     return Response.json({ error: 'Server error' }, { status: 500 });
   }
 }
@@ -144,12 +181,17 @@ export async function GET(request: NextRequest) {
       })),
     }));
 
+    // Lịch sử hóa đơn 30s staleness là acceptable.
+    const headers = {
+      'Cache-Control': 's-maxage=30, stale-while-revalidate=300',
+    };
+
     // Nếu yêu cầu theo ID đơn lẻ, trả về object thay vì mảng
     if (id && transformedInvoices.length > 0) {
-      return Response.json(transformedInvoices[0]);
+      return Response.json(transformedInvoices[0], { headers });
     }
 
-    return Response.json(transformedInvoices);
+    return Response.json(transformedInvoices, { headers });
   } catch (error) {
     console.error('Invoice fetch error:', error);
     return Response.json({ error: 'Server error' }, { status: 500 });
