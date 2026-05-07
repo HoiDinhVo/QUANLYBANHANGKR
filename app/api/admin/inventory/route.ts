@@ -96,6 +96,17 @@ export async function GET(req: NextRequest) {
             _sum: { Quantity: true },
         });
 
+        // Tổng "Nhập thêm" tích luỹ (tạo + tất cả lần nhập) — không lọc theo kỳ.
+        // Dùng cho cột "Số lượng tổng (tạo + nhập)".
+        const restocksLifetime = await (prisma as any).inventoryLog.groupBy({
+            by: ['ProductId'],
+            where: {
+                StoreId: storeId,
+                Quantity: { gt: 0 },
+            },
+            _sum: { Quantity: true },
+        });
+
         // Bán trong phòng (Type='sale') — tách riêng để hiển thị + tính revenue
         const salesInPeriod = await (prisma as any).inventoryLog.groupBy({
             by: ['ProductId'],
@@ -196,6 +207,9 @@ export async function GET(req: NextRequest) {
             const restockPeriod   = restocksInPeriod.find((r: any) => r.ProductId === p.Id);
             const totalRestocked  = safe(restockPeriod?._sum?.Quantity);
 
+            const restockAll      = restocksLifetime.find((r: any) => r.ProductId === p.Id);
+            const totalRestockedLifetime = safe(restockAll?._sum?.Quantity);
+
             // ── Opening stock ──────────────────────────────────
             // Đảo ngược toàn bộ activity từ startDate tới NOW dựa hoàn toàn
             // vào InventoryLog (single source of truth):
@@ -223,6 +237,7 @@ export async function GET(req: NextRequest) {
                 category:       p.Category,
                 openingStock:   Math.max(0, openingStock),
                 totalRestocked,
+                totalRestockedLifetime,
                 totalSold:      roomSales,
                 totalTakeaway:  takeaway,
                 totalExported:  exported,

@@ -31,6 +31,7 @@ interface ProductStat {
     category: string;
     openingStock: number;
     totalRestocked: number;
+    totalRestockedLifetime: number;
     totalSold: number;
     totalTakeaway: number;
     totalExported: number;
@@ -301,7 +302,7 @@ export default function InventoryStatsPage() {
             : stats.map(s => [
                 s.productName,
                 CAT_LABELS[s.category] ?? s.category,
-                s.openingStock + s.totalRestocked,
+                s.totalRestockedLifetime,
                 s.totalSold,
                 s.totalExported,
                 s.totalRevenue,
@@ -598,7 +599,7 @@ export default function InventoryStatsPage() {
                                             </td>
                                         </tr>
                                     ) : filteredStats.map(item => {
-                                        const totalQuantity = item.openingStock + item.totalRestocked;
+                                        const totalQuantity = item.totalRestockedLifetime;
                                         return (
                                             <tr key={item.productId} className="hover:bg-slate-50/60 transition-colors">
                                                 <td className="px-5 py-3 text-[13px] font-bold text-slate-900">{item.productName}</td>
