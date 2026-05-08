@@ -157,14 +157,14 @@ export async function GET(req: NextRequest) {
             _sum: { Quantity: true },
         });
 
-        // Takeaway riêng (Type='export') — tách khỏi 'gift' để metric "bán chạy"
-        // chỉ cộng doanh số thực: bán phòng + mang về (không tính tặng).
+        // Takeaway = mang về + tặng. Metric "bán chạy" gộp cả 2 loại
+        // (bán phòng + mang về + tặng) theo yêu cầu.
         const takeawayInPeriod = await (prisma as any).inventoryLog.groupBy({
             by: ['ProductId'],
             where: {
                 StoreId: storeId,
                 CreatedAt: { gte: startDate, lte: endDate },
-                Type: 'export',
+                Type: { in: ['export', 'gift'] },
             },
             _sum: { Quantity: true },
         });
@@ -314,14 +314,16 @@ export async function GET(req: NextRequest) {
         /* 8b. DAILY SALES BREAKDOWN (per product, per VN day)     */
         /*     - "Bán phòng": từ OrderItem có hóa đơn Status='paid'*/
         /*       (chưa xóa). Mốc thời gian = Invoice.CreatedAt.    */
-        /*     - "Mang về": từ InventoryLog Type='export'.         */
+        /*     - "Mang về": từ InventoryLog Type='export' + 'gift' */
+        /*       (gộp mang về & tặng vào cùng cột, doanh thu chỉ   */
+        /*       cộng phần mang về vì tặng giá 0đ).                */
         /* ─────────────────────────────────────────────────────── */
 
         const exportLogs = await (prisma as any).inventoryLog.findMany({
             where: {
                 StoreId: storeId,
                 CreatedAt: { gte: startDate, lte: endDate },
-                Type: 'export',
+                Type: { in: ['export', 'gift'] },
             },
             include: { product: true },
         });
@@ -362,7 +364,10 @@ export async function GET(req: NextRequest) {
             const entry = ensureEntry(key, dateKey, log.ProductId, prod);
             const qty = Math.abs(Number(log.Quantity || 0));
             entry.takeaway += qty;
-            entry.revenue += qty * Number(prod?.Price || 0);
+            // Tặng giá 0đ → không cộng vào doanh thu, chỉ tính số lượng.
+            if (log.Type !== 'gift') {
+                entry.revenue += qty * Number(prod?.Price || 0);
+            }
         }
 
         const dailyBreakdown = Array.from(dailyMap.values())
