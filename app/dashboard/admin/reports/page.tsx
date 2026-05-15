@@ -15,7 +15,7 @@ import {
 import {
     TrendingUp, Receipt, LayoutDashboard, MonitorPlay, Trash2,
     Calendar, Search, Download, X, ArrowLeft, FileText,
-    CheckCircle,
+    CheckCircle, ChevronDown,
 } from 'lucide-react';
 
 /* ─── Types ─────────────────────────────────────────────────── */
@@ -47,6 +47,28 @@ function getGroupKey(date: Date, period: PeriodType): string {
 function fmtVND(n: number) {
     const rounded = Math.ceil(n / 1000) * 1000;
     return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(rounded);
+}
+
+/**
+ * Quy ước "ngày làm việc" của quán karaoke:
+ * - 06:00 → 23:59 → tính vào ngày đó.
+ * - 00:00 → 05:59 → tính vào ngày hôm trước (rạng sáng vẫn thuộc ca tối hôm qua).
+ */
+function getBusinessDay(date: Date) {
+    const d = new Date(date);
+    if (d.getHours() < 6) {
+        d.setDate(d.getDate() - 1);
+    }
+    d.setHours(0, 0, 0, 0);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return {
+        key: `${year}-${month}-${day}`,
+        label: `${day}/${month}/${year}`,
+        weekday: d.toLocaleDateString('vi-VN', { weekday: 'long' }),
+        sortValue: d.getTime(),
+    };
 }
 
 /* ─── Sub-components ─────────────────────────────────────────── */
@@ -112,6 +134,16 @@ export default function ReportsPage() {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
+    const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+
+    const toggleDay = useCallback((key: string) => {
+        setExpandedDays(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    }, []);
 
     /* ── Fetch ─── */
     useEffect(() => {
@@ -267,6 +299,43 @@ export default function ReportsPage() {
     const roomHireInvoices = useMemo(() =>
         paidInvoices.filter(inv => !inv.id.startsWith('TKW') && !inv.id.startsWith('GFT')),
         [paidInvoices]);
+
+    /**
+     * Nhóm hóa đơn theo "ngày làm việc" (06:00 → 05:59 sáng hôm sau).
+     * Mỗi nhóm gồm: số lượng hóa đơn, tổng tiền, doanh thu đã thu, và danh sách hóa đơn của ngày.
+     */
+    const invoicesByDay = useMemo(() => {
+        type DayGroup = {
+            key: string;
+            label: string;
+            weekday: string;
+            sortValue: number;
+            invoices: Invoice[];
+            total: number;
+            paidTotal: number;
+            paidCount: number;
+        };
+        const map = new Map<string, DayGroup>();
+        filteredInvoices.forEach(inv => {
+            const { key, label, weekday, sortValue } = getBusinessDay(new Date(inv.startTime));
+            let g = map.get(key);
+            if (!g) {
+                g = { key, label, weekday, sortValue, invoices: [], total: 0, paidTotal: 0, paidCount: 0 };
+                map.set(key, g);
+            }
+            g.invoices.push(inv);
+            g.total += inv.totalPrice;
+            if (inv.status === 'paid') {
+                g.paidTotal += inv.totalPrice;
+                g.paidCount += 1;
+            }
+        });
+        // Sắp xếp hóa đơn trong từng ngày theo giờ vào (mới nhất trước)
+        map.forEach(g => {
+            g.invoices.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+        });
+        return Array.from(map.values()).sort((a, b) => b.sortValue - a.sortValue);
+    }, [filteredInvoices]);
 
     const selectedStore = stores.find(s => s.id === selectedStoreId);
     const hasActiveFilters = !!(startDate || endDate || searchTerm);
@@ -531,85 +600,166 @@ export default function ReportsPage() {
                     </div>
                 </div>
 
-                {/* Invoice table */}
+                {/* Invoice list — grouped by business day */}
                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                    <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+                    <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-2">
                             <h2 className="text-[13px] font-bold text-slate-800">
-                                Danh sách hóa đơn
+                                Danh sách hóa đơn theo ngày
                                 {selectedStore ? ` — ${selectedStore.name}` : ''}
                             </h2>
                             <span className="bg-slate-100 text-slate-600 text-[11px] font-bold px-2.5 py-0.5 rounded-full">
-                                {filteredInvoices.length}
+                                {invoicesByDay.length} ngày · {filteredInvoices.length} HĐ
                             </span>
                         </div>
+                        {invoicesByDay.length > 0 && (
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setExpandedDays(new Set(invoicesByDay.map(g => g.key)))}
+                                    className="text-[11px] font-bold text-blue-600 hover:text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-all"
+                                >
+                                    Mở tất cả
+                                </button>
+                                <button
+                                    onClick={() => setExpandedDays(new Set())}
+                                    className="text-[11px] font-bold text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-all"
+                                >
+                                    Thu gọn
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Hint về quy ước ngày làm việc */}
+                    <div className="px-5 py-2 bg-blue-50/40 border-b border-blue-100/60 text-[10.5px] text-slate-500 italic">
+                        Một "ngày làm việc" tính từ <b className="text-slate-700 not-italic">06:00 sáng</b> đến <b className="text-slate-700 not-italic">05:59 sáng hôm sau</b> (rạng sáng vẫn thuộc ca tối hôm trước).
                     </div>
 
                     {isLoading ? (
                         <div className="py-12 text-center text-slate-400 text-[13px] italic">Đang tải...</div>
-                    ) : filteredInvoices.length === 0 ? (
+                    ) : invoicesByDay.length === 0 ? (
                         <div className="py-12 text-center text-slate-400 text-[13px] italic">Chưa có hóa đơn nào</div>
                     ) : (
-                        <div className="overflow-x-auto">
-                            <table className="w-full" style={{ tableLayout: 'fixed' }}>
-                                <colgroup>
-                                    <col style={{ width: '100px' }} />
-                                    <col style={{ width: '110px' }} />
-                                    <col style={{ width: '165px' }} />
-                                    <col style={{ width: '145px' }} />
-                                    <col style={{ width: '120px' }} />
-                                    <col style={{ width: '130px' }} />
-                                </colgroup>
-                                <thead className="bg-slate-50 border-b border-slate-100">
-                                    <tr>
-                                        {['Mã HD', 'Phòng', 'Thời gian', 'Tổng tiền', 'Trạng thái', 'Thao tác'].map(h => (
-                                            <th
-                                                key={h}
-                                                className="px-4 py-3 text-left text-[9px] font-extrabold text-slate-400 uppercase tracking-widest"
-                                            >
-                                                {h}
-                                            </th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {filteredInvoices.map((invoice, idx) => (
-                                        <tr key={invoice.id} className={`transition-colors ${idx % 2 === 0 ? 'hover:bg-blue-50/40' : 'bg-slate-50/50 hover:bg-blue-50/40'
-                                            }`}>
-                                            <td className="px-4 py-3 font-mono text-[11px] font-semibold text-slate-500">
-                                                #{invoice.id.slice(0, 6).toUpperCase()}
-                                            </td>
-                                            <td className="px-4 py-3 text-[13px] font-bold text-slate-900">
-                                                Phòng {(invoice as any).roomNumber}
-                                            </td>
-                                            <td className="px-4 py-3 text-[11px] text-slate-500">
-                                                {new Date(invoice.startTime).toLocaleString('vi-VN')}
-                                            </td>
-                                            <td className="px-4 py-3 text-[13px] font-bold text-slate-900">
-                                                {fmtVND(invoice.totalPrice)}đ
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <StatusBadge status={invoice.status} />
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <div className="flex items-center gap-2">
-                                                    <Link href={`/dashboard/invoice/${invoice.id}`}>
-                                                        <button className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-blue-600 text-[11px] font-bold hover:bg-blue-50 hover:border-blue-200 transition-all">
-                                                            Chi tiết
-                                                        </button>
-                                                    </Link>
-                                                    <button
-                                                        onClick={() => handleDeleteInvoice(invoice.id)}
-                                                        className="p-1.5 rounded-lg border border-red-100 bg-white text-red-400 hover:bg-red-50 hover:border-red-200 transition-all"
-                                                    >
-                                                        <Trash2 className="w-3.5 h-3.5" />
-                                                    </button>
+                        <div className="divide-y divide-slate-100">
+                            {invoicesByDay.map(group => {
+                                const isExpanded = expandedDays.has(group.key);
+                                return (
+                                    <div key={group.key}>
+                                        {/* Day summary row */}
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleDay(group.key)}
+                                            className={`w-full px-5 py-4 flex items-center justify-between gap-3 text-left transition-colors ${isExpanded ? 'bg-blue-50/50' : 'hover:bg-slate-50'
+                                                }`}
+                                        >
+                                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                                                <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${isExpanded ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'
+                                                    }`}>
+                                                    <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                                                 </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                                <div className="min-w-0">
+                                                    <div className="text-[14px] font-bold text-slate-900 truncate">
+                                                        Ngày {group.label}
+                                                        <span className="ml-2 text-[11px] font-medium text-slate-400 capitalize">{group.weekday}</span>
+                                                    </div>
+                                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                                        <span className="font-semibold text-slate-700">{group.invoices.length}</span> hóa đơn
+                                                        {group.paidCount > 0 && (
+                                                            <>
+                                                                <span className="mx-1.5 text-slate-300">·</span>
+                                                                <span className="text-emerald-600 font-semibold">{group.paidCount}</span> đã thanh toán
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-4 flex-shrink-0">
+                                                <div className="text-right">
+                                                    <div className="text-[13px] font-extrabold text-emerald-600 leading-tight">
+                                                        {fmtVND(group.paidTotal)}đ
+                                                    </div>
+                                                    {group.total !== group.paidTotal && (
+                                                        <div className="text-[10px] text-slate-400 mt-0.5">
+                                                            Tổng: {fmtVND(group.total)}đ
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <span className={`text-[11px] font-bold px-3 py-1.5 rounded-full transition-all flex-shrink-0 ${isExpanded
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'bg-blue-50 text-blue-600'
+                                                    }`}>
+                                                    {isExpanded ? 'Thu gọn' : 'Xem thêm'}
+                                                </span>
+                                            </div>
+                                        </button>
+
+                                        {/* Expanded invoice list for this day */}
+                                        {isExpanded && (
+                                            <div className="bg-slate-50/40 border-t border-slate-100 overflow-x-auto">
+                                                <table className="w-full" style={{ tableLayout: 'fixed' }}>
+                                                    <colgroup>
+                                                        <col style={{ width: '100px' }} />
+                                                        <col style={{ width: '110px' }} />
+                                                        <col style={{ width: '165px' }} />
+                                                        <col style={{ width: '145px' }} />
+                                                        <col style={{ width: '120px' }} />
+                                                        <col style={{ width: '130px' }} />
+                                                    </colgroup>
+                                                    <thead className="bg-white border-b border-slate-100">
+                                                        <tr>
+                                                            {['Mã HD', 'Phòng', 'Thời gian', 'Tổng tiền', 'Trạng thái', 'Thao tác'].map(h => (
+                                                                <th
+                                                                    key={h}
+                                                                    className="px-4 py-2.5 text-left text-[9px] font-extrabold text-slate-400 uppercase tracking-widest"
+                                                                >
+                                                                    {h}
+                                                                </th>
+                                                            ))}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {group.invoices.map((invoice, idx) => (
+                                                            <tr key={invoice.id} className={`transition-colors ${idx % 2 === 0 ? 'bg-white hover:bg-blue-50/40' : 'bg-slate-50/30 hover:bg-blue-50/40'
+                                                                }`}>
+                                                                <td className="px-4 py-3 font-mono text-[11px] font-semibold text-slate-500">
+                                                                    #{invoice.id.slice(0, 6).toUpperCase()}
+                                                                </td>
+                                                                <td className="px-4 py-3 text-[13px] font-bold text-slate-900">
+                                                                    Phòng {(invoice as any).roomNumber}
+                                                                </td>
+                                                                <td className="px-4 py-3 text-[11px] text-slate-500">
+                                                                    {new Date(invoice.startTime).toLocaleString('vi-VN')}
+                                                                </td>
+                                                                <td className="px-4 py-3 text-[13px] font-bold text-slate-900">
+                                                                    {fmtVND(invoice.totalPrice)}đ
+                                                                </td>
+                                                                <td className="px-4 py-3">
+                                                                    <StatusBadge status={invoice.status} />
+                                                                </td>
+                                                                <td className="px-4 py-3">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <Link href={`/dashboard/invoice/${invoice.id}`}>
+                                                                            <button className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-blue-600 text-[11px] font-bold hover:bg-blue-50 hover:border-blue-200 transition-all">
+                                                                                Chi tiết
+                                                                            </button>
+                                                                        </Link>
+                                                                        <button
+                                                                            onClick={() => handleDeleteInvoice(invoice.id)}
+                                                                            className="p-1.5 rounded-lg border border-red-100 bg-white text-red-400 hover:bg-red-50 hover:border-red-200 transition-all"
+                                                                        >
+                                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                                        </button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                 </div>

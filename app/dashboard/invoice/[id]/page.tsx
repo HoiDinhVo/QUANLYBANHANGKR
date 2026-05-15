@@ -259,11 +259,16 @@ export default function InvoicePage() {
         </div>
         {/* Bảng chi tiết */}
         <table className="w-full text-[13px] mb-2" style={{ borderCollapse: 'collapse', lineHeight: 1.6 }}>
+          <colgroup>
+            <col style={{ width: '52%' }} />
+            <col style={{ width: '16%' }} />
+            <col style={{ width: '32%' }} />
+          </colgroup>
           <thead>
             <tr style={{ borderBottom: '1px solid #000' }}>
               <th className="text-left py-1 text-[11px] tracking-wide uppercase">Chi tiết</th>
-              <th className="text-center py-1 text-[11px] tracking-wide">SL</th>
-              <th className="text-right py-1 text-[11px] tracking-wide uppercase">T.Tiền</th>
+              <th className="text-center py-1 text-[11px] tracking-wide" style={{ paddingLeft: 6, paddingRight: 6 }}>SL</th>
+              <th className="text-right py-1 text-[11px] tracking-wide uppercase" style={{ paddingLeft: 8 }}>T.Tiền</th>
             </tr>
           </thead>
           <tbody>
@@ -281,8 +286,8 @@ export default function InvoicePage() {
                   {' '}({durationText})
                 </div>
               </td>
-              <td className="text-center py-1.5">{(durationMinutes / 60).toFixed(2)}</td>
-              <td className="text-right py-1.5 font-black">
+              <td className="text-center py-1.5" style={{ paddingLeft: 6, paddingRight: 6, whiteSpace: 'nowrap' }}>x{(durationMinutes / 60).toFixed(2)}</td>
+              <td className="text-right py-1.5 font-black" style={{ paddingLeft: 8, whiteSpace: 'nowrap' }}>
                 {invoice.roomCost.toLocaleString('vi-VN', { maximumFractionDigits: 0 })}
               </td>
             </tr>
@@ -296,8 +301,8 @@ export default function InvoicePage() {
                     Giá: {item.price.toLocaleString('vi-VN')}
                   </div>
                 </td>
-                <td className="text-center py-1.5">{item.quantity}</td>
-                <td className="text-right py-1.5 font-black">
+                <td className="text-center py-1.5" style={{ paddingLeft: 6, paddingRight: 6, whiteSpace: 'nowrap' }}>x{item.quantity}</td>
+                <td className="text-right py-1.5 font-black" style={{ paddingLeft: 8, whiteSpace: 'nowrap' }}>
                   {(item.price * item.quantity).toLocaleString('vi-VN', { maximumFractionDigits: 0 })}
                 </td>
               </tr>

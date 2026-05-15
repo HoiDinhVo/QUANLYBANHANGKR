@@ -2765,11 +2765,16 @@ export default function RoomPage() {
           </div>
           {/* Bảng chi tiết */}
           <table className="w-full text-[13px] mb-2" style={{ borderCollapse: 'collapse', lineHeight: 1.6 }}>
+            <colgroup>
+              <col style={{ width: '52%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '32%' }} />
+            </colgroup>
             <thead>
               <tr style={{ borderBottom: '1px solid #000' }}>
                 <th className="text-left py-1 text-[11px] tracking-wide uppercase">Chi tiết</th>
-                <th className="text-center py-1 text-[11px] tracking-wide">SL</th>
-                <th className="text-right py-1 text-[11px] tracking-wide uppercase">T.Tiền</th>
+                <th className="text-center py-1 text-[11px] tracking-wide" style={{ paddingLeft: 6, paddingRight: 6 }}>SL</th>
+                <th className="text-right py-1 text-[11px] tracking-wide uppercase" style={{ paddingLeft: 8 }}>T.Tiền</th>
               </tr>
             </thead>
             <tbody>
@@ -2785,8 +2790,8 @@ export default function RoomPage() {
                     {' '}({durationText})
                   </div>
                 </td>
-                <td className="text-center py-1.5">{(durationMinutes / 60).toFixed(2)}</td>
-                <td className="text-right py-1.5 font-black">{roomChargeTotal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })}</td>
+                <td className="text-center py-1.5" style={{ paddingLeft: 6, paddingRight: 6, whiteSpace: 'nowrap' }}>x{(durationMinutes / 60).toFixed(2)}</td>
+                <td className="text-right py-1.5 font-black" style={{ paddingLeft: 8, whiteSpace: 'nowrap' }}>{roomChargeTotal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })}</td>
               </tr>
               {/* Các món */}
               {orderItems.map((item, index) => (
@@ -2796,8 +2801,8 @@ export default function RoomPage() {
                     {localItemNotes[item.productId] && <div className="text-[12px] font-normal italic text-black">Ghi chú: {localItemNotes[item.productId]}</div>}
                     <div className="text-[11px] font-normal text-black">Giá: {item.price.toLocaleString('vi-VN')}</div>
                   </td>
-                  <td className="text-center py-1.5">{item.quantity}</td>
-                  <td className="text-right py-1.5 font-black">{(item.price * item.quantity).toLocaleString('vi-VN', { maximumFractionDigits: 0 })}</td>
+                  <td className="text-center py-1.5" style={{ paddingLeft: 6, paddingRight: 6, whiteSpace: 'nowrap' }}>x{item.quantity}</td>
+                  <td className="text-right py-1.5 font-black" style={{ paddingLeft: 8, whiteSpace: 'nowrap' }}>{(item.price * item.quantity).toLocaleString('vi-VN', { maximumFractionDigits: 0 })}</td>
                 </tr>
               ))}
             </tbody>
